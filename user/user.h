@@ -1,7 +1,11 @@
 struct stat;
 struct rtcdate;
 
-// system calls
+/**
+ * xv6上的用户程序有一组有限的可用库函数，您可以在<user/user.h>中看到所有可调用的函数
+ */
+
+// system calls -> From kernel/sysproc.c  kernel/sysfile.c  
 int fork(void);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
