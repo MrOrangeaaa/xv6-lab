@@ -53,8 +53,9 @@ struct dinode {
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
+// Directory entry -> 大小为16字节
 struct dirent {
-  ushort inum;
-  char name[DIRSIZ];
+  ushort inum;  //文件节点 -> Linux中的inode -> 2字节
+  char name[DIRSIZ];  //文件名 -> 14字节
 };
 
