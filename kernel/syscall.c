@@ -57,7 +57,7 @@ argraw(int n)
 int
 argint(int n, int *ip)
 {
-  *ip = argraw(n);
+  *ip = argraw(n);  //argraw()固定返回一个8字节大小的数据，按需取用，这里只用低32-bit
   return 0;
 }
 
@@ -105,6 +105,9 @@ extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
 
+extern uint64 sys_trace(void);
+
+//定义一个函数指针数组
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -127,6 +130,15 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+
+[SYS_trace]   sys_trace,
+};
+
+static const char *syscall_names[] = {
+  "placeholder",
+  "fork", "exit", "wait", "pipe", "read", "kill", "exec", "fstat", "chdir", "dup",
+  "getpid", "sbrk", "sleep", "uptime", "open", "write", "mknod", "unlink", "link",
+  "mkdir", "close", "trace", "sysinfo"
 };
 
 void
@@ -135,12 +147,19 @@ syscall(void)
   int num;
   struct proc *p = myproc();
 
-  num = p->trapframe->a7;
-  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
-    p->trapframe->a0 = syscalls[num]();
-  } else {
-    printf("%d %s: unknown sys call %d\n",
-            p->pid, p->name, num);
+  num = p->trapframe->a7;  //从a7寄存器取出系统调用号
+  if(num > 0 && num < NELEM(syscalls) && syscalls[num])
+  {
+    p->trapframe->a0 = syscalls[num]();  //执行系统调用，获取返回值，并存入a0寄存器
+
+    if ((p->trace_mask) & (1 << num))  //表明当前的系统调用号需要跟踪
+    {
+      printf("%d: syscall %s -> %d\n", p->pid, syscall_names[num], p->trapframe->a0);
+    }
+  }
+  else
+  {
+    printf("%d %s: unknown syscall %d\n", p->pid, p->name, num);
     p->trapframe->a0 = -1;
   }
 }
