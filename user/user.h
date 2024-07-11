@@ -5,7 +5,10 @@ struct rtcdate;
  * xv6上的用户程序有一组有限的可用库函数，您可以在<user/user.h>中看到所有可调用的函数
  */
 
-// system calls -> From kernel/sysproc.c  kernel/sysfile.c  
+// system calls
+/**
+ * 这里只有它们的C语言声明，没有C语言实现，它们的具体实现在 "user/usys.S" 中 -> 直接用汇编语言(RISC-V)实现
+ */
 int fork(void);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
