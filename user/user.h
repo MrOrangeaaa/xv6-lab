@@ -1,7 +1,13 @@
 struct stat;
 struct rtcdate;
 
-// system calls
+struct sysinfo;
+
+/**
+ * system calls
+ * 此处仅为声明，具体实现在user/usys.S（不是C语言实现，而是直接用RISC-V汇编语言实现）
+ * 当然其实也不需要我们自己去实现，而是使用perl语言脚本为我们自动生成，故只需要修改user/usys.pl即可
+ */
 int fork(void);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
@@ -25,6 +31,7 @@ int sleep(int);
 int uptime(void);
 
 int trace(int);
+int sysinfo(struct sysinfo*);
 
 // ulib.c
 int stat(const char*, struct stat*);

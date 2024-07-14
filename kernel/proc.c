@@ -658,3 +658,23 @@ procdump(void)
     printf("\n");
   }
 }
+
+
+/**
+ * 获取(正在使用的)进程数
+ */
+uint64
+get_usedproc()
+{
+  uint64 cnt = 0;
+
+  //遍历proc
+  struct proc* p;
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->state != UNUSED)
+      cnt++;  //如果这个进程是正在使用的
+    release(&p->lock);
+  }
+  return cnt;
+}

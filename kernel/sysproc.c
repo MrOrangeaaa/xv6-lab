@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -105,5 +106,29 @@ sys_trace(void)
   if(argint(0, &mask) < 0)  //限定有效参数范围：[0, 2147483647]
     return -1;
   myproc()->trace_mask = mask;
+  return 0;
+}
+
+// my func2
+uint64
+sys_sysinfo(void)
+{
+  //获取用户态的sysinfo地址 -> 这个地址是基于用户态页表的虚拟地址
+  uint64 user_infoaddr;
+  if(argaddr(0, &user_infoaddr) < 0)
+    return -1;
+  
+  //获取当前(用户)进程
+  struct proc *p = myproc();
+  
+  //获取系统信息
+  struct sysinfo info;
+  info.freemem = get_freemem();
+  info.nproc = get_usedproc();
+
+  //Copy from kernel to user.
+  if(copyout(p->pagetable, user_infoaddr, (char*)&info, sizeof(info)) < 0)
+      return -1;
+
   return 0;
 }
