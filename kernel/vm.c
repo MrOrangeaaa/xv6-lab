@@ -22,7 +22,7 @@ kvmmake(void)
 {
   pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t) kalloc();  //kalloc()分配一个physical page，返回物理地址
+  kpgtbl = (pagetable_t) kalloc();  //kalloc()分配一个physical page，并返回该页的物理地址
   memset(kpgtbl, 0, PGSIZE);
 
   /**
