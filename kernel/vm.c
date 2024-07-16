@@ -8,6 +8,7 @@
 
 /*
  * the kernel's page table.
+ * 即第一级页表的物理地址 -> 会被放进SATP寄存器
  */
 pagetable_t kernel_pagetable;
 
@@ -21,23 +22,23 @@ kvmmake(void)
 {
   pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t) kalloc();
+  kpgtbl = (pagetable_t) kalloc();  //kalloc()分配一个physical page，返回物理地址
   memset(kpgtbl, 0, PGSIZE);
 
+  /**
+   * 以下是一堆恒等映射
+   */
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
   // virtio mmio disk interface
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
   // PLIC
   kvmmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
   // map kernel text executable and read-only.
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
-
   // map kernel data and the physical RAM we'll make use of.
   kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
@@ -49,7 +50,7 @@ kvmmake(void)
   return kpgtbl;
 }
 
-// Initialize the one kernel_pagetable
+// Initialize the kernel_pagetable
 void
 kvminit(void)
 {
