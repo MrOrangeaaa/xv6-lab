@@ -26,7 +26,7 @@ kvmmake(void)
   memset(kpgtbl, 0, PGSIZE);
 
   /**
-   * 以下是一堆恒等映射
+   * 恒等映射
    */
   // uart registers
   kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
@@ -39,11 +39,11 @@ kvmmake(void)
   // map kernel data and the physical RAM we'll make use of.
   kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
-
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
+  /**
+   * 非恒等映射
+   */
+  // map the trampoline for trap entry/exit to the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
-
   // map kernel stacks
   proc_mapstacks(kpgtbl);
   
@@ -62,22 +62,30 @@ kvminit(void)
 void
 kvminithart()
 {
-  w_satp(MAKE_SATP(kernel_pagetable));
+  w_satp(MAKE_SATP(kernel_pagetable));  //首次写SATP寄存器 -> 自此往后，程序开始在虚拟地址空间中运行
   sfence_vma();
 }
 
-// Return the address of the PTE in page table pagetable
-// that corresponds to virtual address va.  If alloc!=0,
-// create any required page-table pages.
+// Return the address of the PTE in page table pagetable that corresponds to virtual address va.
+// If alloc!=0, create any required page-table pages.
 //
-// The risc-v Sv39 scheme has three levels of page-table
-// pages. A page-table page contains 512 64-bit PTEs.
+// The risc-v Sv39 scheme has three levels of page-table pages.
+// A page-table page contains 512 64-bit PTEs.
 // A 64-bit virtual address is split into five fields:
 //   39..63 -- must be zero.
 //   30..38 -- 9 bits of level-2 index.
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+/**
+ * 查询虚拟地址va在(三级)页表中最终(即在第三级页表中)对应的那个PTE，并返回该PTE的地址
+ * 在查询过程中，若该虚拟地址在前两级页表就被卡住(即出现页表项无效的情况)，则
+ * -> alloc==0，查询失败；
+ * -> alloc!=0，请求内核分配新的物理内存页，用于新建一级页表；
+ * ----------------------------------------------------------
+ * 成功，返回第三级页表中某个PTE的地址
+ * 失败，返回0
+ */
 pte_t *
 walk(pagetable_t pagetable, uint64 va, int alloc)
 {
@@ -92,7 +100,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
+      *pte = PA2PTE(pagetable) | PTE_V;  //只设置flag_valid
     }
   }
   return &pagetable[PX(0, va)];
@@ -132,37 +140,55 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
-// physical addresses starting at pa. va and size might not
-// be page-aligned. Returns 0 on success, -1 if walk() couldn't
-// allocate a needed page-table page.
+// physical addresses starting at pa. va and size might not be page-aligned.
+// Returns 0 on success;
+// Returns -1 if walk() couldn't allocate a needed page-table page;
+/**
+ * 在(三级)页表中创建页表项(PTEs) -> 将某一段虚拟内存映射到一段物理内存上
+ * pagetable: 页表头指针
+ * va: 要映射的起始虚拟地址
+ * size: 要映射的内存大小
+ * pa: 对应的起始物理地址
+ * perm: 页表项的权限位(设置PTE的bit1~bit4)
+ */
 int
 mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
-  uint64 a, last;
+  uint64 first, last;
   pte_t *pte;
 
   if(size == 0)
     panic("mappages: size");
   
-  a = PGROUNDDOWN(va);
+  //将虚拟内存的起始地址向下取到最近的页边界 -> start virtual address of the first page
+  first = PGROUNDDOWN(va);
+  //将虚拟内存的结束地址向下取到最近的页边界 -> start virtual address of the last page
   last = PGROUNDDOWN(va + size - 1);
-  for(;;){
-    if((pte = walk(pagetable, a, 1)) == 0)
+
+  //逐页设置PTE
+  //只需要手动设置第三级的PTE即可，walk()会帮你自动设置前两级的PTE
+  //每页虚拟内存派一个代表地址来设置就行了 -> 毕竟处于同一页的虚拟地址都是共用同一组PTE的
+  for(;;)
+  {
+    if((pte = walk(pagetable, first, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
-    if(a == last)
+    if(first == last)
       break;
-    a += PGSIZE;
+    first += PGSIZE;
     pa += PGSIZE;
   }
+  
   return 0;
 }
 
-// Remove npages of mappings starting from va. va must be
-// page-aligned. The mappings must exist.
-// Optionally free the physical memory.
+// Remove npages of mappings starting from va.
+// Attention:
+// 1. va must be page-aligned.
+// 2. the mappings must exist.
+// 3. optionally free the physical memory, by set do_free.
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -172,17 +198,23 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE)
+  {
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    
+    //释放a对应的物理内存页
+    if(do_free)
+    {
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
+
+    //清空a对应的第三级页表中的PTE
     *pte = 0;
   }
 }
@@ -263,7 +295,10 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 }
 
 // Recursively free page-table pages.
-// All leaf mappings must already have been removed.
+// Attention: all leaf mappings must already have been removed!!!
+/**
+ * 释放(三级)页表占用的物理内存
+ */
 void
 freewalk(pagetable_t pagetable)
 {
@@ -282,13 +317,16 @@ freewalk(pagetable_t pagetable)
   kfree((void*)pagetable);
 }
 
-// Free user memory pages,
-// then free page-table pages.
+// free user memory pages + free page-table pages
 void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
+  //若sz > 0，则释放一段用户空间的虚拟内存 -> 解除页表映射，同时释放对应的物理内存
+  //从虚拟地址0开始，大小为sz(bytes)，sz的值会向上对齐page
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+
+  //释放(三级)页表
   freewalk(pagetable);
 }
 
@@ -432,4 +470,44 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+//递归函数，供vmprint()使用
+void
+recursion_func(pagetable_t pagetable, uint64 depth)
+{
+  if(depth == 0)
+    printf("page table %p\n", pagetable);
+  
+  //遍历当前页表
+  for(int i = 0; i < 512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V)  //查看该PTE是否有效
+    {
+      //根据当前PTE所处的页表深度打印前缀
+      for(int j = 0; j < depth; j++)
+        printf(".. ");
+      
+      //将PTE转换为可用的物理地址（即“8bits-0 + 44bits-PPN + 12bits-offset”）
+      uint64 pa = PTE2PA(pte);
+
+      //打印
+      printf("..%d: pte %p pa %p\n", i, pte, pa);
+
+      //向下递归
+      if(depth < 2)
+        recursion_func((pagetable_t)pa, depth + 1);
+    }
+  }
+}
+
+/**
+ * 打印某个进程的(三级)页表 -> 使用DFS(深度优先搜索)遍历
+ */
+void 
+vmprint(pagetable_t pagetable)
+{
+  recursion_func(pagetable, 0);  //当前页表的深度为0(第一级)
 }

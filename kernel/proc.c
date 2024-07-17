@@ -98,15 +98,21 @@ allocpid() {
 }
 
 // Look in the process table for an UNUSED proc.
-// If found, initialize state required to run in the kernel,
-// and return with p->lock held.
+// If found, initialize state required to run in the kernel, and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
+/**
+ * 在进程表中查找一个未使用的进程结构体
+ * -> 若找到了，则初始化它的一些关键状态和资源，然后返回这个进程结构体的指针；
+ * -> 若进程表中没有可用的进程结构体，或者在分配资源时发生错误，则函数将返回0；
+ */
 static struct proc*
 allocproc(void)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  //遍历进程表
+  for(p = proc; p < &proc[NPROC]; p++)
+  {
     acquire(&p->lock);
     if(p->state == UNUSED) {
       goto found;
@@ -117,19 +123,33 @@ allocproc(void)
   return 0;
 
 found:
+  //分配一个pid
   p->pid = allocpid();
+  //设置状态为“已使用”
   p->state = USED;
 
+  // 分配物理内存页
   // Allocate a trapframe page.
-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
-    freeproc(p);
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0)  //若分配失败
+  {
+    freeproc(p);  //释放进程
     release(&p->lock);
     return 0;
   }
 
-  // An empty user page table.
+  // Allocate a usyscall page.
+  if((p->usyscall = (struct usyscall *)kalloc()) == 0)
+  {
+      freeproc(p);
+      release(&p->lock);
+      return 0;
+  }
+  p->usyscall->pid = p->pid;  //把当前进程的pid存入共享页
+
+  // Create a user page table.
   p->pagetable = proc_pagetable(p);
-  if(p->pagetable == 0){
+  if(p->pagetable == 0)
+  {
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -150,11 +170,19 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  //释放物理内存页 -> 这些内存页是内核专门为了此进程才分配的
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  if(p->usyscall)
+    kfree((void*)p->usyscall);
+  p->usyscall = 0;
+
+  //释放页表
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -167,31 +195,45 @@ freeproc(struct proc *p)
 }
 
 // Create a user page table for a given process,
-// with no user memory, but with trampoline pages.
+// with no user memory, but with trampoline page & trapframe page & usyscall page.
+/**
+ * 为用户进程创建页表，并完成一些基本的页表映射
+ */
 pagetable_t
 proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
+  // Create an empty page table. -> 作为第一级页表
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
 
-  // map the trampoline code (for system call return)
-  // at the highest user virtual address.
-  // only the supervisor uses it, on the way
-  // to/from user space, so not PTE_U.
-  if(mappages(pagetable, TRAMPOLINE, PGSIZE,
-              (uint64)trampoline, PTE_R | PTE_X) < 0){
+  // Map the trampoline code (for system call return) at the highest user virtual address.
+  // Only the supervisor uses it, on the way to/from user space, so not PTE_U.
+  // 此处我有一事不解：你都压根没给用户进程访问权限(PTE_U)，煞有其事地在这设置"PTE_R/PTE_W/PTE_E"有毛用？
+  if(mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X) < 0)
+  {
     uvmfree(pagetable, 0);
     return 0;
   }
 
-  // map the trapframe just below TRAMPOLINE, for trampoline.S.
-  if(mappages(pagetable, TRAPFRAME, PGSIZE,
-              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
+  // Map the trapframe just below TRAMPOLINE, for trampoline.S.
+  if(mappages(pagetable, TRAPFRAME, PGSIZE, (uint64)(p->trapframe), PTE_R | PTE_W) < 0)
+  {
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
+  // Map the usyscall page
+  // 注意usyscall page的属性是：用户进程可访问 + 用户进程只读
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)(p->usyscall), PTE_R | PTE_U) < 0)
+  {
+    //必须得先把页表中所有的映射都解除了，才能释放页表
+    //此处我有一事不解：为啥映射都解除了，却不释放对应的物理内存页呢？？？
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
   }
@@ -199,13 +241,16 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
-// Free a process's page table, and free the
-// physical memory it refers to.
+// Free a process's page table,
+// and free the physical memory it refers to.
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
+  //此处仅需解除页表映射即可，对应的物理内存页已在别处释放
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+
   uvmfree(pagetable, sz);
 }
 

@@ -59,20 +59,33 @@
 // each surrounded by invalid guard pages.
 #define KSTACK(p) (TRAMPOLINE - (p)*2*PGSIZE - 3*PGSIZE)
 
-// User memory layout.
-// Address zero first:
-//   text
-//   original data and bss
-//   fixed-size stack
-//   expandable heap
-//   ...
-//   USYSCALL (shared with kernel)
-//   TRAPFRAME (p->trapframe, used by the trampoline)
-//   TRAMPOLINE (the same page as in the kernel)
+
+/**
+ * User memory layout.
+ * Address zero first:
+ *   text
+ *   original data and bss
+ *   fixed-size stack
+ *   expandable heap
+ *   ...
+ *   USYSCALL (shared with kernel)
+ *   TRAPFRAME (p->trapframe, used by the trampoline)
+ *   TRAMPOLINE (the same page as in the kernel)
+ */
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
 #ifdef LAB_PGTBL
 #define USYSCALL (TRAPFRAME - PGSIZE)
+#endif
 
+#ifdef LAB_PGTBL
+/**
+ * 共享页 -> usyscall page
+ * 通常，为加速某些系统调用，内核每创建一个用户进程，就会额外分配出一个物理内存页，作为"usyscall page"
+ * 这块内存是内核与用户进程共享的(也就是说，这个page也会被映射到用户进程的页表中)，但用户进程只有读权限
+ * 内核会把一些数据分享在这里，这样用户进程想要获取某些数据的时候就无须在用户态和内核态之间来回切换，直接读这个page就行了
+ * 这个page目前就只存放如下这样一个结构体：
+ */
 struct usyscall {
   int pid;  // Process ID
 };

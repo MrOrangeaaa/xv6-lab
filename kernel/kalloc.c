@@ -44,7 +44,7 @@ kinit()
   //释放从内核结束到物理内存顶端的所有内存区域
   freerange(end, (void*)PHYSTOP);
 
-  printf("free memory range: [0x%016llx ~ 0x%016llx]\n", (unsigned long long)end, (unsigned long long)PHYSTOP);
+  printf("free memory range: [%p ~ %p]\n", end, PHYSTOP);
 }
 
 /**
@@ -61,7 +61,7 @@ freerange(void *pa_start, void *pa_end)
 
 /**
  * 释放一个物理内存页
- * Free the page of physical memory pointed at by v,
+ * Free the page of physical memory pointed at by pa,
  * which normally should have been returned by a call to kalloc().
  * (The exception is when initializing the allocator; see kinit above.)
  */

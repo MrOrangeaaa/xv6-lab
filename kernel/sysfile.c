@@ -441,7 +441,7 @@ sys_exec(void)
       goto bad;
   }
 
-  int ret = exec(path, argv);
+  int ret = exec(path, argv);  //真正的核心实现在"kernel/exec.c"
 
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
     kfree(argv[i]);
