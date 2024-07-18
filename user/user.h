@@ -2,6 +2,7 @@ struct stat;
 struct rtcdate;
 struct sysinfo;
 
+// 汇编语言实现
 // system calls
 int fork(void);
 int exit(int) __attribute__((noreturn));
@@ -24,31 +25,36 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-
+#ifdef LAB_PGTBL
+int pgaccess(void*, uint8, uint64*);
+#endif
 #ifdef LAB_NET
 int connect(uint32, uint16, uint16);
 #endif
 
-#ifdef LAB_PGTBL
-int pgaccess(void *base, int len, void *mask);
-// usyscall region
-int ugetpid(void);
-#endif
 
-// ulib.c
+// C语言实现
+// user/ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
 void *memmove(void*, const void*, int);
 char* strchr(const char*, char c);
 int strcmp(const char*, const char*);
-void fprintf(int, const char*, ...);
-void printf(const char*, ...);
 char* gets(char*, int max);
 uint strlen(const char*);
 void* memset(void*, int, uint);
-void* malloc(uint);
-void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+#ifdef LAB_PGTBL
+int ugetpid(void);
+#endif
+// user/umalloc.c
+void* malloc(uint);
+void free(void*);
+// user/printf.c
+void fprintf(int, const char*, ...);
+void printf(const char*, ...);
+// 暂时未定义
 int statistics(void*, int);
+

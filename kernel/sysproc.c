@@ -75,16 +75,6 @@ sys_sleep(void)
   return 0;
 }
 
-
-#ifdef LAB_PGTBL
-int
-sys_pgaccess(void)
-{
-  // lab pgtbl: your code here.
-  return 0;
-}
-#endif
-
 uint64
 sys_kill(void)
 {
@@ -107,3 +97,63 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+#ifdef LAB_PGTBL
+/**
+ * 注意：用户必须保证，从传入的虚拟地址base开始，往后连续len*PGSIZE个虚拟地址都是有效的（“有效的” 即 “在页表中映射过的”）
+ */
+int
+sys_pgaccess(void)
+{
+  pagetable_t pagetable = myproc()->pagetable;
+  uint64 base, mask;
+  int len;
+
+  if(argaddr(0, &base) < 0)
+    return -1;
+  if(argint(1, &len) < 0)
+    return -1;
+  if(argaddr(2, &mask) < 0)
+    return -1;
+
+  if(len > 64)  //由于掩码位数有限，故一次最多检查64个PTE -> 即64个内存页
+  {
+    printf("len is too long\n");
+    return -1;
+  }
+  
+  uint64 mask_temp = 0;
+  uint8 pte_cnt = 0;
+  pte_t* cur_pte = walk(pagetable, base, 0);
+  if(cur_pte == 0)
+    panic("sys_pgaccess: walk");
+  uint16 cur_idx = (base >> 12) & 0x1FF;
+  while(pte_cnt < len)
+  {
+    if((*cur_pte & PTE_V) == 0)
+      panic("sys_pgaccess: va not mapped");
+    if(*cur_pte & PTE_A)
+    {
+        mask_temp |= (1 << pte_cnt);
+        *cur_pte ^= PTE_A;  //clear PTE_A bit.
+    }
+    pte_cnt++;
+    if(cur_idx < 511)
+    {
+      cur_pte++;
+      cur_idx++;
+    }else {  //已经到达当前page table的末尾
+      base += pte_cnt * PGSIZE;
+      if((cur_pte = walk(pagetable, base, 0)) == 0)
+        panic("sys_pgaccess: walk");
+      cur_idx = 0;
+    }
+  }
+
+  if(copyout(pagetable, mask, (char*)&mask_temp, sizeof(uint64)) < 0)
+    return -1;
+
+  return 0;
+}
+#endif

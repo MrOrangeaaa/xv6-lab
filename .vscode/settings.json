@@ -2,6 +2,7 @@
     "files.associations": {
         "defs.h": "c",
         "proc.h": "c",
-        "memlayout.h": "c"
+        "memlayout.h": "c",
+        "user.h": "c"
     }
 }

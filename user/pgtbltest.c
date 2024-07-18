@@ -52,7 +52,7 @@ void
 pgaccess_test()
 {
   char *buf;
-  unsigned int abits;
+  uint64 abits;  //64bits -> 一次至多检查64个page
   printf("pgaccess_test starting\n");
   testname = "pgaccess_test";
   buf = malloc(32 * PGSIZE);
