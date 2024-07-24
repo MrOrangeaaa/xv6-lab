@@ -47,7 +47,7 @@ struct trapframe {
   /*  16 */ uint64 kernel_trap;   // usertrap()
   /*  24 */ uint64 epc;           // saved user program counter
   /*  32 */ uint64 kernel_hartid; // saved kernel tp
-  /*  40 */ uint64 ra;
+  /*  40 */ uint64 ra;            // 接下来就是保存32个通用寄存器（实际这里只注册了31个，没有zero寄存器）
   /*  48 */ uint64 sp;
   /*  56 */ uint64 gp;
   /*  64 */ uint64 tp;
@@ -105,4 +105,13 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // alarm
+  uint64 alarm_ticks;
+  void (*alarm_handler)(void);
+  uint64 alarm_ticks_elapsed;
+
+  struct trapframe *alarm_trapframe;  // Backup copy of trapframe when alarm ringing
+
+  int alarm_state;  //避免前一次alarm_handler都还没执行完，又迎来一次alarm ringing
 };

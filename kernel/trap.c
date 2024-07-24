@@ -76,9 +76,46 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
+  /**
+   * CPU中的硬件计时器每过一个时钟周期都会产生一个时间中断，并且该中断会触发xv6的trap(陷入)流程
+   * A tick is a fairly arbitrary unit of time in xv6, determined by how often a hardware timer generates interrupts.
+   * 设置这个机制的主要目的：让当前的用户进程放弃CPU，以切换到其他用户进程 -> “时间片”机制
+   * 但现在我们要利用此<定时器中断>，做点额外的工作
+   */
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  {
+    if(p->alarm_ticks > 0)
+    {
+      p->alarm_ticks_elapsed++;
+
+      if(p->alarm_state == 0 && p->alarm_ticks_elapsed >= p->alarm_ticks)
+      {
+        p->alarm_ticks_elapsed = 0;
+
+        //备份trapframe，以便执行完alarm_handler之后调用sigreturn()恢复现场
+        //这样搞的话，我个人认为还是有一点小隐患的
+        //此方案不会出错的前提是：alarm_handler中的程序得确保完全不依赖32个通用寄存器的初始值
+        //也就是说，当alarm_handler开始执行时，无论此时CPU中的32个通用寄存器中是什么内容，程序都能正常执行
+        //不过实际上，alarm_handler作为一个中断处理函数(横插一脚，不需要什么运行的上下文)，似乎也确实符合这一要求
+        *(p->alarm_trapframe) = *(p->trapframe);
+
+        /**
+         * 这里是一个很有意思的设计
+         * 当alarm is ringing(闹钟响起)，我们并没有直接在内核空间中去执行alarm_handler -> 事实上我们是可以做到的
+         * 我们选择切换回用户空间去执行alarm_handler
+         * 原因在于我们得保持隔离性，毕竟alarm_handler是由用户定义的，你很难保证这其中不会做什么危险的事情...
+         */
+        p->trapframe->epc = (uint64)(p->alarm_handler);
+
+        //如果前一次alarm_handler都还没执行完就又迎来一次alarm ringing，我们是不应该响应的，否则：
+        //1. 该用户进程永远就困在handler中出不去了(handler还没执行完就又要从头开始重新执行...)；
+        //2. 我们备份的alarm_trapframe会被覆盖，导致即使将来handler能执行完，我们也没法恢复现场了；
+        p->alarm_state = 1;
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }

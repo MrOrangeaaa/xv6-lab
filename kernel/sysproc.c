@@ -58,6 +58,9 @@ sys_sleep(void)
   int n;
   uint ticks0;
 
+  //回溯当前用户栈的调用关系
+  backtrace();
+
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -94,4 +97,36 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  void (*handler)(void);
+
+  if(argint(0, &ticks) < 0)
+    return -1;
+  if(argaddr(1, (uint64*)(&handler)) < 0)
+    return -1;
+
+  struct proc* p = myproc();
+  p->alarm_ticks = ticks;
+  p->alarm_handler = handler;
+  p->alarm_ticks_elapsed = 0;
+
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc* p = myproc();
+  //恢复现场 -> 得伪装成仿佛alarm_handler从未发生过一样
+  *(p->trapframe) = *(p->alarm_trapframe);
+  //alarm_handler已执行完毕，重置state
+  p->alarm_state = 0;
+
+  return 0;
 }

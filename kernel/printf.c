@@ -132,3 +132,29 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+void 
+backtrace(void)
+{
+  printf("backtrace:\n");
+
+  uint64* cur_frame = (uint64*)r_fp();  //获取当前frame pointer
+  uint64* stack_bottom = (uint64*)PGROUNDUP((uint64)cur_frame);  //栈底为高地址
+  uint64* stack_top = (uint64*)PGROUNDDOWN((uint64)cur_frame);  //栈顶为低地址
+
+  /**
+   * Xv6 allocates one page for each stack in the xv6 kernel at PAGE-aligned address.
+   * xv6只给每个用户进程分配1个page用作栈区，并且栈区向低地址增长
+   * 所以每个用户进程调用的第一个函数，其栈帧的帧指针(即首个frame pointer)一定是指向 <此页的最高地址 + 8 = 下一页的首地址> 这个位置
+   * 故我们不妨借此特性，用于终止循环
+   */
+  //遍历当前用户进程的stack(中的所有previous frame pointer)
+  while(cur_frame >= stack_top && cur_frame < stack_bottom)
+  {
+    printf("%p\n", *(cur_frame - 1));  //打印当前栈帧的return address
+    cur_frame = (uint64*)(*(cur_frame - 2));
+  }
+
+  // printf("first frame pointer: %p\n", cur_frame);
+}

@@ -331,6 +331,21 @@ sfence_vma()
   asm volatile("sfence.vma zero, zero");
 }
 
+/**
+ * <C语言的内嵌汇编>
+ * <GCC拓展内联汇编>
+ * -> GCC编译器会将当前正在执行的函数的帧指针保存在 s0 寄存器中
+ * -> 总的来说，r_fp() 这个函数读出了 s0 这个寄存器的值，然后储存在 x 中，最后又把 x 返回了
+ */
+// 获取当前的Frame Pointer
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
+
 
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
