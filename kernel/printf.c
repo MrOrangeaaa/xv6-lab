@@ -122,6 +122,8 @@ panic(char *s)
   printf(s);
   printf("\n");
   panicked = 1; // freeze uart output from other CPUs
+
+  //内核里一旦出现紧急问题(异常)，就让整个操作系统停下来，在这逛花园...
   for(;;)
     ;
 }

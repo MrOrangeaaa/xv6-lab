@@ -167,9 +167,10 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   return 0;
 }
 
-// Remove npages of mappings starting from va. va must be
-// page-aligned. The mappings must exist.
-// Optionally free the physical memory.
+// Remove npages of mappings starting from va.
+// 1. va must be page-aligned.
+// 2. the mappings must exist.
+// 3. optionally free the physical memory.
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
@@ -179,11 +180,17 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE)
+  {
+    //会出现这样一种场景：懒分配的一些用户内存页都还没来得及使用(实际分配内存)就要被释放
+    //举个例子：exec()系统调用中就经常出现此场景，因为它往往需要丢弃当前内存中的很多东西(通过fork()继承而来的)，从而转去执行另一个程序
+    //于是这里就需要高抬贵手，放过那些懒分配的page
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      // panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      // panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -225,6 +232,7 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
+// 内存分配的最小单位就是1个page
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -315,9 +323,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      // panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      // panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -356,11 +366,29 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  while(len > 0){
+  while(len > 0)
+  {
+  again:
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
-      return -1;
+    {
+      //若dstva为懒分配地址，则并非真的出错，为其<实际分配内存>就好了
+      //在用户态访问懒分配地址会触发page fault，然后转入trap流程，在usertrap()中就会为其<实际分配内存>
+      //但倘若是在内核态访问懒分配地址，如果不专门处理，就会被panic捕获(在panic里逛花园)或者返回失败(-1)
+      //在内核态若想访问用户空间的虚拟地址，必须要依赖copyout()和copyin() -> 所以改进它俩就行
+      if(is_lazy_addr(dstva))
+      {
+        if(lazy_alloc(dstva) < 0)
+          return -1;
+        goto again;
+      }
+      else
+      {
+        return -1;
+      }
+    }
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -381,11 +409,25 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  while(len > 0){
+  while(len > 0)
+  {
+  again:
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
-      return -1;
+    {
+      if(is_lazy_addr(srcva))
+      {
+        if(lazy_alloc(srcva) < 0)
+          return -1;
+        goto again;
+      }
+      else
+      {
+        return -1;
+      }
+    }
+    
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;

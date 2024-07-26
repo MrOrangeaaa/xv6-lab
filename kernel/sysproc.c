@@ -41,14 +41,31 @@ sys_wait(void)
 uint64
 sys_sbrk(void)
 {
-  int addr;
   int n;
-
   if(argint(0, &n) < 0)
     return -1;
+  
+  /**
+   * proc结构体中的sz字段记录了内核实际分配给当前用户进程的内存大小(bytes) -> trampoline和trapframe不算在内
+   * 所以不妨将其理解为一个指针值，指向heap的上边界
+   */
+  int addr;
   addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  // printf("sz = %p\n", addr);
+
+  if(n < 0)  //用户进程申请释放内存 -> 释放可就不需要“懒释放”，赶紧趁早释放掉...
+  {
+    if(addr + n < 0)
+      return -1;
+    
+    if(growproc(n) < 0)
+      return -1;
+  }
+  else  //用户进程申请分配内存 -> 懒分配
+  {
+    myproc()->sz += n;
+  }
+
   return addr;
 }
 
