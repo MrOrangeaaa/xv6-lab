@@ -368,27 +368,20 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0)
   {
-  again:
-    va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    //专门处理lazy_addr -> 若dstva为懒分配地址，则为其<实际分配内存>
+    //在用户态访问懒分配地址会触发page fault，然后转入trap流程，在usertrap()中就会为其<实际分配内存>
+    //但倘若是在内核态访问懒分配地址，-> 在内核态若想访问用户空间的虚拟地址，必须要依赖copyout()和copyin()
+    //如果不专门处理lazy_addr，就会返回失败(-1) -> 所以得修改copyout()和copyin()
+    if(is_lazy_addr(dstva))
     {
-      //若dstva为懒分配地址，则并非真的出错，为其<实际分配内存>就好了
-      //在用户态访问懒分配地址会触发page fault，然后转入trap流程，在usertrap()中就会为其<实际分配内存>
-      //但倘若是在内核态访问懒分配地址，如果不专门处理，就会被panic捕获(在panic里逛花园)或者返回失败(-1)
-      //在内核态若想访问用户空间的虚拟地址，必须要依赖copyout()和copyin() -> 所以改进它俩就行
-      if(is_lazy_addr(dstva))
-      {
-        if(lazy_alloc(dstva) < 0)
+      if(lazy_alloc(dstva) < 0)
           return -1;
-        goto again;
-      }
-      else
-      {
-        return -1;
-      }
     }
 
+    pa0 = walkaddr(pagetable, dstva);
+    if(pa0 == 0)
+      return -1;
+    va0 = PGROUNDDOWN(dstva);
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -411,23 +404,16 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 
   while(len > 0)
   {
-  again:
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if(is_lazy_addr(srcva))
     {
-      if(is_lazy_addr(srcva))
-      {
-        if(lazy_alloc(srcva) < 0)
+      if(lazy_alloc(srcva) < 0)
           return -1;
-        goto again;
-      }
-      else
-      {
-        return -1;
-      }
     }
     
+    pa0 = walkaddr(pagetable, srcva);
+    if(pa0 == 0)
+      return -1;
+    va0 = PGROUNDDOWN(srcva);
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;

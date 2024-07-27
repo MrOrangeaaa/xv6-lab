@@ -50,7 +50,7 @@ int is_lazy_addr(uint64 va)
   return 1;
 }
 
-//实际分配内存(给<发生缺页异常的>懒分配地址va) -> 仿照uvmalloc()的写法
+//实际分配内存(给懒分配地址va所在的虚拟地址页) -> 仿照uvmalloc()的写法
 //成功返回0；失败返回-1；
 int lazy_alloc(uint64 va)
 {
