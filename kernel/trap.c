@@ -29,10 +29,57 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
-//
+int
+is_cow_addr(uint64 va)
+{
+  struct proc *p = myproc();
+  if(va >= MAXVA) 
+    return 0;
+  pte_t* pte = walk(p->pagetable, va, 0);
+  if(pte == 0)
+    return 0;
+  if((*pte & PTE_V) == 0)
+    return 0;
+  if((*pte & PTE_U) == 0)
+    return 0;
+  if((*pte & PTE_C) == 0)
+    return 0;
+  return 1;
+}
+
+int
+cow_alloc(uint64 va)
+{
+  struct proc *p = myproc();
+
+  pte_t* pte = walk(p->pagetable, va, 0);
+  if(pte == 0)
+    return 0;
+  
+  uint64 pte_flags = PTE_FLAGS(*pte);
+
+  //拷贝物理内存页
+  uint64 old_page = PTE2PA(*pte);
+  uint64 new_page = (uint64)kalloc();
+  if(new_page == 0)
+    return -1;
+  memmove((void*)new_page, (void*)old_page, PGSIZE);
+  
+  //更改映射
+  uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 1);
+  pte_flags |= PTE_W;
+  pte_flags &= (~PTE_C);
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, new_page, pte_flags) != 0)
+  {
+    kfree((void*)new_page);
+    return -1;
+  }
+
+  return 0;
+}
+
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
-//
 void
 usertrap(void)
 {
@@ -50,7 +97,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(r_scause() == 8)
+  {
     // system call
 
     if(p->killed)
@@ -65,9 +113,22 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
-    // ok
-  } else {
+  }
+  else if((r_scause() == 15) && (is_cow_addr(r_stval())))
+  {
+    // [12]->instruction page fault; [13]->load page fault; [15]->store/AMO page fault;
+
+    if(cow_alloc(r_stval()) != 0)
+    {
+      p->killed = 1;
+    }
+  }
+  else if((which_dev = devintr()) != 0)
+  {
+    // interrupt
+  }
+  else
+  {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
