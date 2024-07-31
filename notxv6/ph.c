@@ -13,8 +13,12 @@ struct entry {
   int value;
   struct entry *next;
 };
-struct entry *table[NBUCKET];
-int keys[NKEYS];
+
+struct entry *table[NBUCKET];  //必须加锁 -> 尽量细粒度一些，即为table中的每个元素创建一把锁
+pthread_mutex_t bucket_mutex[NBUCKET];
+
+int keys[NKEYS];  //虽然也是多线程共享，但是不用加锁，因为大家都是只读（除了主线程一开始单独写一遍进行初始化），故不会产生竞态
+
 int nthread = 1;
 
 
@@ -41,6 +45,8 @@ void put(int key, int value)
 {
   int i = key % NBUCKET;
 
+  pthread_mutex_lock(&bucket_mutex[i]);
+
   // is the key already present?
   struct entry *e = 0;
   for (e = table[i]; e != 0; e = e->next) {
@@ -55,6 +61,7 @@ void put(int key, int value)
     insert(key, value, &table[i], table[i]);
   }
 
+  pthread_mutex_unlock(&bucket_mutex[i]);
 }
 
 static struct entry*
@@ -62,11 +69,20 @@ get(int key)
 {
   int i = key % NBUCKET;
 
+  /**
+   * 同一时间段内
+   * 只读不写，没必要加锁
+   * 边读边写，才需要加锁 -> 而且往往使用读写锁，效率会更高
+   */
+  
+  // pthread_mutex_lock(&bucket_mutex[i]);
 
   struct entry *e = 0;
   for (e = table[i]; e != 0; e = e->next) {
     if (e->key == key) break;
   }
+
+  // pthread_mutex_unlock(&bucket_mutex[i]);
 
   return e;
 }
@@ -118,6 +134,14 @@ main(int argc, char *argv[])
     keys[i] = random();
   }
 
+  // 初始化互斥锁
+  for (int i = 0; i < NBUCKET; i++) {
+    if (pthread_mutex_init(&bucket_mutex[i], NULL) != 0) {
+      perror("Mutex init failed");
+      exit(-1);
+    }
+  }
+
   //
   // first the puts
   //
@@ -147,4 +171,9 @@ main(int argc, char *argv[])
 
   printf("%d gets, %.3f seconds, %.0f gets/second\n",
          NKEYS*nthread, t1 - t0, (NKEYS*nthread) / (t1 - t0));
+
+  // 销毁互斥锁
+  for (int i = 0; i < NBUCKET; i++) {
+    pthread_mutex_destroy(&bucket_mutex[i]);
+  }
 }

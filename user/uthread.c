@@ -11,13 +11,35 @@
 #define MAX_THREAD  4
 
 
-struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
+// Saved registers for user context switches.
+struct thread_context {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
 };
+
+struct thread {
+  char                    stack[STACK_SIZE];    /* the thread's stack */
+  int                     state;                /* FREE, RUNNING, RUNNABLE */
+  struct thread_context   context;
+};
+
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
-extern void thread_switch(uint64, uint64);
+extern void thread_switch(struct thread_context*, struct thread_context*);
               
 void 
 thread_init(void)
@@ -39,22 +61,26 @@ thread_schedule(void)
   /* Find another runnable thread. */
   next_thread = 0;
   t = current_thread + 1;
-  for(int i = 0; i < MAX_THREAD; i++){
+  for(int i = 0; i < MAX_THREAD; i++)
+  {
     if(t >= all_thread + MAX_THREAD)
       t = all_thread;
-    if(t->state == RUNNABLE) {
+    if(t->state == RUNNABLE)
+    {
       next_thread = t;
       break;
     }
     t = t + 1;
   }
 
-  if (next_thread == 0) {
+  if(next_thread == 0)
+  {
     printf("thread_schedule: no runnable threads\n");
     exit(-1);
   }
 
-  if (current_thread != next_thread) {         /* switch threads?  */
+  if(current_thread != next_thread)
+  {
     next_thread->state = RUNNING;
     t = current_thread;
     current_thread = next_thread;
@@ -62,8 +88,12 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
-  } else
+    thread_switch(&t->context, &next_thread->context);
+  }
+  else
+  {
     next_thread = 0;
+  }
 }
 
 void 
@@ -71,11 +101,17 @@ thread_create(void (*func)())
 {
   struct thread *t;
 
-  for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
-    if (t->state == FREE) break;
+  for(t = all_thread; t < all_thread + MAX_THREAD; t++)
+  {
+    if(t->state == FREE) break;
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  // 需要专门处理：“首次switch到某个线程”
+  // 此时对于一个崭新的线程来说，它是没有context的，所以我们需要手动设置一些寄存器，以确保该线程能够正常启动
+  // 别的寄存器其实都不太重要，唯独ra/sp这俩需要初始化一下
+  t->context.ra = (uint64)func;
+  t->context.sp = (uint64)&t->stack + (STACK_SIZE - 1);
 }
 
 void 

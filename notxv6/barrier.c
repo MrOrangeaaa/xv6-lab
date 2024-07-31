@@ -30,7 +30,25 @@ barrier()
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
-  
+  /**
+   * 让我们来重新梳理一下条件变量的作用
+   * 1. 之前我们学过利用条件变量来实现<生产者-消费者模型>，以减少一些无意义的锁争用；
+   * 2. 在“同步屏障”这个案例中，我们看到条件变量可以帮助我们<汇聚多个线程>，即给多线程提供一个汇合的场所；
+   * -- 总结一下，本质上都是：利用条件变量来阻塞线程，只有当某个条件被满足时，才会放行！ --
+   */
+  pthread_mutex_lock(&bstate.barrier_mutex);
+  bstate.nthread++;
+  if(bstate.nthread < nthread)
+  {
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+  else if(bstate.nthread == nthread)
+  {
+    bstate.nthread = 0;
+    bstate.round++;
+    pthread_cond_broadcast(&bstate.barrier_cond);  //这里必须是pthread_cond_broadcast()，不能是pthread_cond_signal()
+  }
+  pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *
