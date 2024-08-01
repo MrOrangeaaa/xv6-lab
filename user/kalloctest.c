@@ -30,7 +30,7 @@ int ntas(int print)
   if (statistics(buf, SZ) <= 0) {
     fprintf(2, "ntas: no stats\n");
   }
-  c = strchr(buf, '=');
+  c = strchr(buf, '=');  //在buf中找到'='字符的位置
   n = atoi(c+2);
   if(print)
     printf("%s", buf);
@@ -41,19 +41,21 @@ void test1(void)
 {
   void *a, *a1;
   int n, m;
+
   printf("start test1\n");  
   m = ntas(0);
-  for(int i = 0; i < NCHILD; i++){
+
+  for(int i = 0; i < NCHILD; i++) {
     int pid = fork();
     if(pid < 0){
       printf("fork failed");
       exit(-1);
     }
-    if(pid == 0){
+    if(pid == 0) {  //子进程
       for(i = 0; i < N; i++) {
-        a = sbrk(4096);
+        a = sbrk(4096);  //申请堆区内存
         *(int *)(a+4) = 1;
-        a1 = sbrk(-4096);
+        a1 = sbrk(-4096);  //释放堆区内存
         if (a1 != a + 4096) {
           printf("wrong sbrk\n");
           exit(-1);
@@ -63,12 +65,14 @@ void test1(void)
     }
   }
 
-  for(int i = 0; i < NCHILD; i++){
+  for(int i = 0; i < NCHILD; i++) {
     wait(0);
   }
+
   printf("test1 results:\n");
   n = ntas(1);
-  if(n-m < 10) 
+
+  if(n-m < 10)
     printf("test1 OK\n");
   else
     printf("test1 FAIL\n");

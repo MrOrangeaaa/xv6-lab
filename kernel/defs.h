@@ -114,9 +114,11 @@ void            swtch(struct context*, struct context*);
 
 // spinlock.c
 void            acquire(struct spinlock*);
+void            acquire_without_push(struct spinlock*);
 int             holding(struct spinlock*);
 void            initlock(struct spinlock*, char*);
 void            release(struct spinlock*);
+void            release_without_pop(struct spinlock*);
 void            push_off(void);
 void            pop_off(void);
 uint64          lockfree_read8(uint64 *addr);

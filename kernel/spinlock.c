@@ -91,6 +91,41 @@ acquire(struct spinlock *lk)
   lk->cpu = mycpu();
 }
 
+// Acquire the lock without push_off().
+// Loops (spins) until the lock is acquired.
+void
+acquire_without_push(struct spinlock *lk)
+{
+  // push_off(); // disable interrupts to avoid deadlock.
+  if(holding(lk))
+    panic("acquire");
+
+#ifdef LAB_LOCK
+    __sync_fetch_and_add(&(lk->n), 1);
+#endif      
+
+  // On RISC-V, sync_lock_test_and_set turns into an atomic swap:
+  //   a5 = 1
+  //   s1 = &lk->locked
+  //   amoswap.w.aq a5, a5, (s1)
+  while(__sync_lock_test_and_set(&lk->locked, 1) != 0) {
+#ifdef LAB_LOCK
+    __sync_fetch_and_add(&(lk->nts), 1);
+#else
+   ;
+#endif
+  }
+
+  // Tell the C compiler and the processor to not move loads or stores
+  // past this point, to ensure that the critical section's memory
+  // references happen strictly after the lock is acquired.
+  // On RISC-V, this emits a fence instruction.
+  __sync_synchronize();
+
+  // Record info about lock acquisition for holding() and debugging.
+  lk->cpu = mycpu();
+}
+
 // Release the lock.
 void
 release(struct spinlock *lk)
@@ -118,6 +153,35 @@ release(struct spinlock *lk)
   __sync_lock_release(&lk->locked);
 
   pop_off();
+}
+
+// Release the lock without pop_off().
+void
+release_without_pop(struct spinlock *lk)
+{
+  if(!holding(lk))
+    panic("release");
+
+  lk->cpu = 0;
+
+  // Tell the C compiler and the CPU to not move loads or stores
+  // past this point, to ensure that all the stores in the critical
+  // section are visible to other CPUs before the lock is released,
+  // and that loads in the critical section occur strictly before
+  // the lock is released.
+  // On RISC-V, this emits a fence instruction.
+  __sync_synchronize();
+
+  // Release the lock, equivalent to lk->locked = 0.
+  // This code doesn't use a C assignment, since the C standard
+  // implies that an assignment might be implemented with
+  // multiple store instructions.
+  // On RISC-V, sync_lock_release turns into an atomic swap:
+  //   s1 = &lk->locked
+  //   amoswap.w zero, zero, (s1)
+  __sync_lock_release(&lk->locked);
+
+  // pop_off();
 }
 
 // Check whether this cpu is holding the lock.

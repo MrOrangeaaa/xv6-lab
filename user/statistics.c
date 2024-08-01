@@ -8,7 +8,7 @@ statistics(void *buf, int sz)
 {
   int fd, i, n;
   
-  fd = open("statistics", O_RDONLY);
+  fd = open("statistics", O_RDONLY);  //"statistics"这个特殊文件在user/init.c/main()中被创建
   if(fd < 0) {
       fprintf(2, "stats: open failed\n");
       exit(1);
