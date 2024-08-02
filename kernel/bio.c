@@ -23,7 +23,7 @@
 #include "buf.h"
 
 // #define NBUCKET 13
-// #define HASH(dev, blockno) ((((dev)<<27)|(blockno)) % NBUCKET)
+// #define HASH(dev, blockno) ((((dev) << 27) | (blockno)) % NBUCKET)
 #define NBUCKET 31
 #define HASH(dev, blockno) ((((dev) * 131) + (blockno) * 137) % NBUCKET)
 

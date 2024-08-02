@@ -572,7 +572,7 @@ writetest(char *s)
 void
 writebig(char *s)
 {
-  int i, fd, n;       printf("opening first big file...\n");
+  int i, fd, n;
 
   fd = open("big", O_CREATE|O_RDWR);
   if(fd < 0){
