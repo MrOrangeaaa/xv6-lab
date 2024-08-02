@@ -116,7 +116,7 @@ test0()
       printf("fork failed");
       exit(-1);
     }
-    if(pid == 0){
+    if(pid == 0){  //子进程
       if (chdir(dir) < 0) {
         printf("chdir failed\n");
         exit(1);

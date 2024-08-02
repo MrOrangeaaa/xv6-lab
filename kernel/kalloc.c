@@ -26,6 +26,16 @@ struct run {
 //   struct spinlock lock;
 //   struct run *freelist;
 // } kmem;
+
+/*--- new version ---*/
+struct {
+  struct spinlock lock;
+  struct run *freelist;
+  uint64 st_page[NSTEAL];
+} kmem[NCPU];  //为每个CPU核心创建一个kmem
+
+
+/*--- old version ---*/
 // void
 // kinit()
 // {
@@ -34,22 +44,16 @@ struct run {
 // }
 
 /*--- new version ---*/
-struct {
-  struct spinlock lock, st_lock;
-  struct run *freelist;
-  uint64 st_page[NSTEAL];
-} kmems[NCPU];  //为每个CPU核心创建一个kmem
-
-const uint8 lk_name_sz = sizeof("kmem_cpu_0");
-char kmems_lk_name[NCPU][sizeof("kmem_cpu_0")];
+const uint8 kmem_lk_name_sz = sizeof("kmem_cpu_x");
+char kmem_lk_name[NCPU][sizeof("kmem_cpu_x")];
 
 void
 kinit()
 {
   for(int i = 0; i < NCPU; i++)
   {
-    snprintf(kmems_lk_name[i], lk_name_sz, "kmem_cpu_%d", i);
-    initlock(&kmems[i].lock, kmems_lk_name[i]);
+    snprintf(kmem_lk_name[i], kmem_lk_name_sz, "kmem_cpu_%d", i);
+    initlock(&kmem[i].lock, kmem_lk_name[i]);
   }
 
   freerange(end, (void*)PHYSTOP);  //释放<free memory>
@@ -108,10 +112,10 @@ kfree(void *pa)
   // Disable interrupts to maintain atomicity.
   push_off();
   int cpu = cpuid();
-  acquire_without_push(&kmems[cpu].lock);
-  r->next = kmems[cpu].freelist;
-  kmems[cpu].freelist = r;
-  release_without_pop(&kmems[cpu].lock);
+  acquire_without_push(&kmem[cpu].lock);
+  r->next = kmem[cpu].freelist;
+  kmem[cpu].freelist = r;
+  release_without_pop(&kmem[cpu].lock);
   pop_off();
 }
 
@@ -124,21 +128,21 @@ int ksteal(int cpu)
   uint st_remain = NSTEAL;  //最多还能偷多少页 -> 因为用来装赃物的袋子容量是有限的
 
   //清空用来装赃物的袋子
-  memset(kmems[cpu].st_page, 0, sizeof(kmems[cpu].st_page));
+  memset(kmem[cpu].st_page, 0, sizeof(kmem[cpu].st_page));
 
   //遍历所有CPU核心
   for(int i = 0; i < NCPU; i++)
   {
     if(i == cpu) continue;  //不偷自己
 
-    acquire(&kmems[i].lock);
-    while(kmems[i].freelist && st_remain)
+    acquire(&kmem[i].lock);
+    while(kmem[i].freelist && st_remain)
     {
-      kmems[cpu].st_page[st_idx++] = (uint64)kmems[i].freelist;
-      kmems[i].freelist = kmems[i].freelist->next;  
+      kmem[cpu].st_page[st_idx++] = (uint64)kmem[i].freelist;
+      kmem[i].freelist = kmem[i].freelist->next;  
       st_remain--;
     }
-    release(&kmems[i].lock);
+    release(&kmem[i].lock);
 
     if(st_remain == 0)  //已达偷窃上限
       break;
@@ -178,16 +182,16 @@ kalloc(void)
   // Disable interrupts to maintain atomicity. -> 拒绝抢占式调度
   push_off();
   int cpu = cpuid();
-  acquire_without_push(&kmems[cpu].lock);
-  r = kmems[cpu].freelist;
+  acquire_without_push(&kmem[cpu].lock);
+  r = kmem[cpu].freelist;
   if(r)  //当前CPU有空闲页
   {
-    kmems[cpu].freelist = r->next;
-    release_without_pop(&kmems[cpu].lock);
+    kmem[cpu].freelist = r->next;
+    release_without_pop(&kmem[cpu].lock);
   }
   else  //当前CPU没有空闲页了 -> 去偷别人的
   {
-    release_without_pop(&kmems[cpu].lock);
+    release_without_pop(&kmem[cpu].lock);
 
     int ret = ksteal(cpu);
     if(ret <= 0)  //一页都没偷到... -> 直接返回空指针(0)
@@ -196,20 +200,20 @@ kalloc(void)
       return 0;
     }
 
-    acquire_without_push(&kmems[cpu].lock);
+    acquire_without_push(&kmem[cpu].lock);
     //把偷来的空闲页依次插入当前CPU的freelist（头插）
     for(int i = 0; i < ret; i++)
     {
-      if(!kmems[cpu].st_page[i])
+      if(!kmem[cpu].st_page[i])
         break;
-      ((struct run*)kmems[cpu].st_page[i])->next = kmems[cpu].freelist;
-      kmems[cpu].freelist = (struct run*)kmems[cpu].st_page[i];
+      ((struct run*)kmem[cpu].st_page[i])->next = kmem[cpu].freelist;
+      kmem[cpu].freelist = (struct run*)kmem[cpu].st_page[i];
     }
 
     //现在有空闲页了（偷来的），重新分配一次
-    r = kmems[cpu].freelist;
-    kmems[cpu].freelist = r->next;
-    release_without_pop(&kmems[cpu].lock);
+    r = kmem[cpu].freelist;
+    kmem[cpu].freelist = r->next;
+    release_without_pop(&kmem[cpu].lock);
   }
   pop_off();
 
