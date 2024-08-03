@@ -24,11 +24,17 @@
 
 // #define NBUCKET 13
 // #define HASH(dev, blockno) ((((dev) << 27) | (blockno)) % NBUCKET)
-
 #define NBUCKET 31
 #define HASH(dev, blockno) ((((dev) * 131) + (blockno) * 137) % NBUCKET)
 
 
+/**
+ * 关于bcache中的锁，这里特别解释一下：
+ * 1. 无论是<old version>中的lock，还是<new version>中的bucket_lock，
+ *    这俩spinlock的职责都是保护buf中的valid/disk/dev/blockno/refcnt/lastused/prev/next这些元数据字段；
+ * 2. 而每个buf内部自带的那个lock，
+ *    这个sleeplock的职责才是保护buf中的data字段，即真正的数据字段，缓存着磁盘块中的实际数据；
+ */
 /*--- old version ---*/
 // struct {
 //   struct spinlock lock;
