@@ -139,13 +139,13 @@ filewrite(struct file *f, uint64 addr, int n)
   if(f->writable == 0)
     return -1;
 
-  if(f->type == FD_PIPE){
+  if(f->type == FD_PIPE){  // 管道文件
     ret = pipewrite(f->pipe, addr, n);
-  } else if(f->type == FD_DEVICE){
+  } else if(f->type == FD_DEVICE){  // 设备文件
     if(f->major < 0 || f->major >= NDEV || !devsw[f->major].write)
       return -1;
     ret = devsw[f->major].write(1, addr, n);
-  } else if(f->type == FD_INODE){
+  } else if(f->type == FD_INODE){  // 其它类型的文件都可以归为inode文件
     // write a few blocks at a time to avoid exceeding
     // the maximum log transaction size, including
     // i-node, indirect block, allocation blocks,

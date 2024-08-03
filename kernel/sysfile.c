@@ -238,6 +238,8 @@ bad:
   return -1;
 }
 
+// 在文件系统中创建一个新文件
+// Return the pointer of a locked inode.
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -304,11 +306,35 @@ sys_open(void)
       return -1;
     }
   } else {
-    if((ip = namei(path)) == 0){
-      end_op();
-      return -1;
+    // Recursively follow symlinks.
+    int symlink_depth = 0;
+    while(1)
+    {
+      // 根据文件路径索引到该文件对应的inode
+      if((ip = namei(path)) == 0){
+        end_op();
+        return -1;
+      }
+
+      ilock(ip);
+      // Whether to continue following symlink?
+      if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+        if(++symlink_depth > 10){  // Too many layer of symlinks, might be an endless loop...
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+        if(readi(ip, 0, (uint64)path, 0, MAXPATH) < 0){
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+        iunlockput(ip);
+      }
+      else
+        break;
     }
-    ilock(ip);
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -482,5 +508,36 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+
+uint64
+sys_symlink(void)
+{
+  struct inode *ip;
+  char target_path[MAXPATH], symlink_path[MAXPATH];
+
+  if(argstr(0, target_path, MAXPATH) < 0 || argstr(1, symlink_path, MAXPATH) < 0)
+    return -1;
+  
+  begin_op();
+
+  // 创建软链接文件
+  ip = create(symlink_path, T_SYMLINK, 0, 0);
+  if(!ip){
+    end_op();
+    return -1;  // 创建文件失败
+  }
+
+  // 向软链接文件中写入target_path
+  if(writei(ip, 0, (uint64)target_path, 0, strlen(target_path)) != strlen(target_path)){
+    panic("symlink: writei");
+  }
+
+  // 使用inode和使用buf(块缓存)很类似，都是用之前先拿锁，用完之后先释放锁，再将引用计数减1
+  iunlockput(ip);
+
+  end_op();
   return 0;
 }

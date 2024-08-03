@@ -1,6 +1,8 @@
-#define T_DIR     1   // Directory
-#define T_FILE    2   // File
-#define T_DEVICE  3   // Device
+// 文件类型 -> 对应inode中的type字段
+#define T_DIR       1   // Directory
+#define T_FILE      2   // File
+#define T_DEVICE    3   // Device
+#define T_SYMLINK   4   // Symbolic link
 
 struct stat {
   int dev;     // File system's disk device
