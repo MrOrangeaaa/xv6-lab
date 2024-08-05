@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -483,4 +484,202 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+
+
+// Return virtual address of memory-mapped region.
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  uint length;
+  int prot, flags, fd, offset;
+  struct file *f;
+
+  if(argaddr(0, &addr) < 0 || argint(1, (int*)&length) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 || argfd(4, &fd, &f) < 0 || argint(5, &offset) < 0)
+    return -1;
+  
+  if(length == 0)
+    return -1;
+
+  if((offset % PGSIZE) != 0)
+    return -1;
+  
+  // 1. 文件本身不可读，mmap设置了可读； 2. 文件本身不可写，mmap设置了可写，并且还希望将内存映射上的修改写回文件；
+  if((!f->readable && (prot & (PROT_READ))) || (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED)))
+    return -1;
+  
+  // length must be page-aligned
+  length = PGROUNDUP(length);
+  
+  /**
+   * Tips:
+   * 1. mmaptest never pass a non-zero addr argument,
+   *    so addr here is ignored and a new unmapped virtual addr is found to map the file.
+   * 2. we map files right below where the trapframe is, from high addresses to low addresses.
+   * 3. offset must be page-aligned.
+   * 4. 实际上这里 "find a new unmapped virtual addr" 的策略是很蠢的，对于已经被释放的高地址视而不见，
+   *    这会导致新找的 "va" 只减不增，会逐渐压缩堆区可用的虚拟地址空间，
+   *    不过虚拟地址空间往往比物理内存大得多，所以倒是也不会有什么太坏的结果，但总归是不够合理的，有待优化...
+   */
+  struct proc *p = myproc();
+  struct vma *v = 0;
+  uint64 va_max = MMAPSTOP;  // va_max: 此虚拟地址往后的内存都已经被使用了 -> 注意，这里是指用户地址空间
+
+  // Find a free vma, and calculate where to map the file along the way.
+  for(int i = 0; i < NVMA; i++)
+  {
+    struct vma *vv = &p->vma[i];
+    if(vv->valid == 0)
+    {
+      if(v == 0)
+      {
+        v = vv;
+        v->valid = 1;
+      }
+    }
+    else if(vv->va < va_max)
+    {
+      va_max = PGROUNDDOWN(vv->va);
+    }
+  }
+  if(v == 0)
+    panic("mmap: no free vma");
+  
+  v->va = va_max - length;
+  v->length = length;
+  v->prot = prot;
+  v->flags = flags;
+  v->f = f;
+  v->offset = offset;
+
+  // 将文件的引用计数加1
+  filedup(v->f);
+
+  return v->va;
+}
+
+static void
+munmap_writeback(pagetable_t pagetable, uint64 addr, uint length, struct vma *v)
+{
+  uint64 start = addr;
+  uint64 end = addr + length;
+  uint64 va = start;
+
+  while(va < end)
+  {
+    uint64 next_page_va = (va & ~(PGSIZE - 1)) + PGSIZE;
+    uint64 page_end = next_page_va < end ? next_page_va : end;
+    uint64 page_length = page_end - va;
+
+    pte_t *pte = walk(pagetable, va, 0);
+    if(pte == 0)
+    {
+      // panic("munmap_writeback: walk");
+      va = next_page_va;
+      continue;
+    }
+    if((*pte & PTE_V) == 0)
+    {
+      // panic("munmap_writeback: not mapped");
+      va = next_page_va;
+      continue;
+    }
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("munmap_writeback: not a leaf");
+
+    // If this page is dirty, we need to write it back to disk.
+    if(*pte & PTE_D)
+    {
+      uint64 pa = PTE2PA(*pte);
+      
+      // 回盘
+      begin_op();
+      ilock(v->f->ip);
+      writei(v->f->ip, 0, pa, v->offset + (va - v->va), page_length);
+      iunlock(v->f->ip);
+      end_op();
+      
+      // Mark the page as clean.
+      *pte &= ~PTE_D;
+    }
+    
+    va = next_page_va;
+  }
+}
+
+// 释放某个内存映射区(memory-mapped region)的全部或者一部分
+// 注意：这里是有限制的，要么掐头，要么去尾，要么整体全部释放 -> 不允许在中间挖洞
+uint64
+munmap(struct proc *p, uint64 addr, uint length)
+{
+  struct vma *v = get_vma(p, addr);  // 这里保证了addr的合法性，即 v->va <= addr < (v->va + v->length)
+  if(v == 0)
+    return -1;
+  
+  if((length == 0) || ((addr + length) > (v->va + v->length)))  // 保证length的合法性
+    return -1;
+  
+  if((addr > v->va) && ((addr + length) < (v->va + v->length)))  // Trying to "dig a hole" inside the memory-mapped region.
+    return -1;
+
+  // 如果有回盘需求，则先将映射区中待释放的数据写回磁盘文件中
+  if(v->flags & MAP_SHARED)
+  {
+    munmap_writeback(p->pagetable, addr, length, v);
+  }
+
+  // 释放内存页
+  uint64 va;  // va must be page-aligned.
+  uint64 npages;
+  if(addr > v->va)  // 头部有所保留 -> 保留部分所在的pages不能释放
+  {
+    va = PGROUNDUP(addr);
+    npages = (PGROUNDUP(addr + length) - va) / PGSIZE;
+  }
+  else  // 头部没有保留 -> addr == v->va
+  {
+    va = PGROUNDDOWN(addr);
+    if((addr + length) < (v->va + v->length))  // 尾部有保留
+    {
+      npages = (PGROUNDDOWN(addr + length) - va) / PGSIZE;
+    }
+    else  // 尾部没有保留 -> (addr + length) == (v->va + v->length)
+    {
+      npages = (PGROUNDUP(addr + length) - va) / PGSIZE;
+    }
+  }
+  uvmunmap(p->pagetable, va, npages, 1);
+
+  // 更新vma
+  v->length -= length;
+  if(v->length <= 0)  // 该映射区已全部释放完
+  {
+    fileclose(v->f);
+    v->valid = 0;
+  }
+  else
+  {
+    uint64 temp = v->va;
+    v->va = addr > v->va ? v->va : v->va + length;
+    v->offset += v->va - temp;
+  }
+
+  return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  struct proc *p = myproc();
+  
+  uint64 addr;
+  uint length;
+
+  if(argaddr(0, &addr) < 0 || argint(1, (int*)&length) < 0)
+    return -1;
+
+  return munmap(p, addr, length);
 }

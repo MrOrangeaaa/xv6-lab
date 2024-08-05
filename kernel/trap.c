@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -29,10 +33,60 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
-//
+// 根据映射区内的虚拟地址获取该映射区对应的vma
+struct vma*
+get_vma(struct proc *p, uint64 va)
+{
+  for(int i = 0; i < NVMA; i++)
+  {
+    struct vma *v = &p->vma[i];
+    if(v->valid == 1 && va >= v->va && va < (v->va + v->length))
+    {
+      return v;
+    }
+  }
+  return 0;
+}
+
+// 实际分配内存（给mmap懒分配擦屁股）
+int
+mmap_alloc(struct proc *p, uint64 va)
+{
+  struct vma *v = get_vma(p, va);
+  if(v == 0)
+    return -1;
+  
+  void* mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+  
+  // read data from disk. -> 获取va所在的那一个page对应的文件内容
+  begin_op();
+  ilock(v->f->ip);
+  readi(v->f->ip, 0, (uint64)mem, v->offset + PGROUNDDOWN(va - v->va), PGSIZE);  // 实际上很有可能读不满一个page，因为sys_mmap()在映射时是按 "length = PGROUNDUP(length);" 进行映射的
+  iunlock(v->f->ip);
+  end_op();
+
+  // set appropriate perms, then map the page that was just allocated.
+  int perm = PTE_U;
+  if(v->prot & PROT_READ)
+    perm |= PTE_R;
+  if(v->prot & PROT_WRITE)
+    perm |= PTE_W;
+  if(v->prot & PROT_EXEC)
+    perm |= PTE_X;
+  if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, perm) < 0)
+  {
+    kfree(mem);
+    return -1;
+  }
+  
+  return 0;
+}
+
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
-//
 void
 usertrap(void)
 {
@@ -65,9 +119,17 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if((r_scause() == 13 || r_scause() == 15) && (get_vma(p, r_stval()) != 0)){
+    // mmap
+
+    if(mmap_alloc(p, r_stval()) < 0)
+      p->killed = 1;
   } else if((which_dev = devintr()) != 0){
-    // ok
+    // interrupt
+
   } else {
+    // unexpected
+
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

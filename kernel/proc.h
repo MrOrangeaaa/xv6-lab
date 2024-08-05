@@ -1,3 +1,5 @@
+#define NVMA 16
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -18,7 +20,7 @@ struct context {
   uint64 s11;
 };
 
-// Per-CPU state.
+// Per-CPU state
 struct cpu {
   struct proc *proc;          // The process running on this cpu, or null.
   struct context context;     // swtch() here to enter scheduler().
@@ -80,6 +82,17 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
+// Virtual Memory Area -> Contain meta data for mmap.
+struct vma {
+  int valid;  // Is this vma valid?
+  uint64 va;  // virtual address of memory-mapped region
+  uint length;
+  int prot;
+  int flags;
+  struct file *f;
+  int offset;
+};
+
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -105,4 +118,6 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct vma vma[NVMA];        // VMAs for current process
 };

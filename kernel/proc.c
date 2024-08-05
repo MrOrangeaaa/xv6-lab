@@ -106,9 +106,9 @@ allocproc(void)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(p = proc; p < &proc[NPROC]; p++){
     acquire(&p->lock);
-    if(p->state == UNUSED) {
+    if(p->state == UNUSED){
       goto found;
     } else {
       release(&p->lock);
@@ -141,6 +141,11 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Clear VMAs.
+  for(int i = 0; i < NVMA; i++){
+    p->vma[i].valid = 0;
+  }
+
   return p;
 }
 
@@ -153,9 +158,11 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -301,6 +308,20 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  /**
+   * 这里的设计颇具巧思
+   * 实际上我们只需要拷贝父进程的VMAs中的内容给子进程就行了
+   * 由于我们并没有将父进程页表中mmap的部分拷贝给子进程页表，所以当子进程访问VMAs的时候就会触发page fault
+   * 这样恰好就实现了一种“访问时拷贝”，遵循了fork()中推崇的“懒拷贝”策略
+   */
+  for(i = 0; i < NVMA; i++){
+    struct vma *v = &p->vma[i];
+    if(v->valid){
+      np->vma[i] = *v;
+      filedup(v->f);
+    }
+  }
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -344,6 +365,12 @@ exit(int status)
   if(p == initproc)
     panic("init exiting");
 
+  // 在关闭文件之前完成回盘（如果设置了MAP_SHARED的话...）
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vma[i];
+    munmap(p, v->va, v->length);
+  }
+
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
@@ -352,7 +379,7 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
-
+  
   begin_op();
   iput(p->cwd);
   end_op();

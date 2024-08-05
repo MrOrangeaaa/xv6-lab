@@ -134,10 +134,13 @@ char*           strncpy(char*, const char*, int);
 // syscall.c
 int             argint(int, int*);
 int             argstr(int, char*, int);
-int             argaddr(int, uint64 *);
+int             argaddr(int, uint64*);
 int             fetchstr(uint64, char*, int);
 int             fetchaddr(uint64, uint64*);
 void            syscall();
+
+// sysfile.c
+uint64          munmap(struct proc*, uint64, uint);
 
 // trap.c
 extern uint     ticks;
@@ -145,6 +148,8 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+
+struct vma*     get_vma(struct proc*, uint64);
 
 // uart.c
 void            uartinit(void);
@@ -167,9 +172,11 @@ void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
 uint64          walkaddr(pagetable_t, uint64);
-int             copyout(pagetable_t, uint64, char *, uint64);
-int             copyin(pagetable_t, char *, uint64, uint64);
-int             copyinstr(pagetable_t, char *, uint64, uint64);
+int             copyout(pagetable_t, uint64, char*, uint64);
+int             copyin(pagetable_t, char*, uint64, uint64);
+int             copyinstr(pagetable_t, char*, uint64, uint64);
+
+pte_t*          walk(pagetable_t, uint64, int);
 
 // plic.c
 void            plicinit(void);
